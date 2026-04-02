@@ -834,6 +834,95 @@ def _rich_text_from_ansi(text: str) -> _RichText:
     return _RichText.from_ansi(text or "")
 
 
+_COMMON_RESPONSE_SECTION_LABELS = {
+    "what changed",
+    "files changed",
+    "validation",
+    "one note",
+    "what you need to do",
+    "important detail",
+    "remote push",
+    "next good ui targets",
+    "next ui targets",
+    "setup",
+    "configuration",
+    "troubleshooting",
+}
+
+
+def _looks_like_section_heading(line: str) -> bool:
+    """Detect short section-label lines that should render as headings."""
+    import re
+
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    if re.match(r"^(?:[-*+] |\d+\. |#{1,6}\s|> )", stripped):
+        return False
+    if stripped.startswith(("**", "__", "◆", "◇", "①", "②", "③", "④", "⑤")):
+        return False
+
+    lowered = stripped.rstrip(":").casefold()
+    if lowered in _COMMON_RESPONSE_SECTION_LABELS:
+        return True
+
+    if stripped.endswith(":") and len(stripped) <= 60 and not re.search(r"[.?!]$", stripped):
+        return True
+
+    if len(stripped) <= 32 and re.fullmatch(r"[A-Za-z][A-Za-z0-9 /&+_-]*", stripped):
+        word_count = len(stripped.split())
+        if 1 <= word_count <= 5:
+            return True
+
+    return False
+
+
+
+def _normalize_assistant_markdown(text: str) -> str:
+    """Promote plain-text explanation structure into cleaner markdown.
+
+    Models often answer with lightweight terminal prose like:
+
+        Files changed
+        - cli.py
+
+    Converting obvious section labels into markdown headings gives Rich enough
+    structure to render cleaner hierarchy without changing the underlying words.
+    """
+    lines = (text or "").strip().splitlines()
+    if not lines:
+        return ""
+
+    normalized: list[str] = []
+    for idx, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if _looks_like_section_heading(stripped):
+            if normalized and normalized[-1] != "":
+                normalized.append("")
+            normalized.append(f"**{stripped.rstrip(':')}**")
+            next_line = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+            if next_line and not next_line.startswith(("- ", "* ", "+ ")) and not next_line[:2].isdigit():
+                normalized.append("")
+            continue
+
+        normalized.append(raw_line.rstrip())
+
+    # Collapse excessive blank lines so long explanations stay tight.
+    collapsed: list[str] = []
+    blank_run = 0
+    for line in normalized:
+        if not line.strip():
+            blank_run += 1
+            if blank_run <= 1:
+                collapsed.append("")
+        else:
+            blank_run = 0
+            collapsed.append(line)
+
+    return "\n".join(collapsed).strip()
+
+
+
 def _render_assistant_response(text: str):
     """Render assistant responses with markdown when appropriate.
 
@@ -852,7 +941,7 @@ def _render_assistant_response(text: str):
     if re.search(r"\x1b\[[0-9;]*[A-Za-z]", content):
         return _rich_text_from_ansi(content)
 
-    stripped = content.strip()
+    stripped = _normalize_assistant_markdown(content)
     markdown_like = (
         "```" in stripped
         or bool(re.search(r"(^|\n)#{1,6}\s+\S", stripped))
@@ -2044,6 +2133,9 @@ class HermesCLI:
             depth = len(heading.group(1))
             marker = "◆ " if depth <= 2 else "◇ "
             return f"{_BOLD}{marker}{heading.group(2)}{reset}"
+
+        if _looks_like_section_heading(stripped):
+            return f"{_BOLD}{stripped.rstrip(':')}{reset}"
 
         rendered = line
         rendered = re.sub(

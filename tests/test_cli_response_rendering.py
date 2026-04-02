@@ -25,6 +25,28 @@ def test_render_assistant_response_uses_markdown_for_formatted_text():
     assert "`cli.py`" not in output
 
 
+def test_render_assistant_response_promotes_plain_section_labels():
+    response = """Files changed
+- cli.py
+- tests/test_cli_response_rendering.py
+
+Validation
+- ran py_compile
+"""
+
+    renderable = cli._render_assistant_response(response)
+
+    console = Console(record=True, force_terminal=False, color_system=None, width=80)
+    console.print(Panel(renderable))
+    output = console.export_text()
+
+    assert "Files changed" in output
+    assert "Validation" in output
+    assert "cli.py" in output
+    assert "tests/test_cli_response_rendering.py" in output
+    assert "ran py_compile" in output
+
+
 def test_render_assistant_response_preserves_ansi_text():
     ansi = "\x1b[31mred text\x1b[0m"
 
@@ -52,3 +74,16 @@ def test_format_streamed_response_line_restyles_basic_markdown():
     assert "\033[1m" in rendered
     assert "\033[3m" in rendered
     assert "\033[4m" in rendered
+
+
+def test_format_streamed_response_line_bolds_plain_section_labels():
+    dummy = _DummyCLI()
+
+    rendered = cli.HermesCLI._format_streamed_response_line(
+        dummy,
+        "Validation",
+        "\033[38;2;255;248;220m",
+    )
+
+    assert "Validation" in rendered
+    assert "\033[1m" in rendered
