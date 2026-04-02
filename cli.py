@@ -481,6 +481,7 @@ except Exception:
 
 from rich import box as rich_box
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.markup import escape as _escape
 from rich.panel import Panel
 from rich.text import Text as _RichText
@@ -810,6 +811,8 @@ def _prune_stale_worktrees(repo_root: str, max_age_hours: int = 24) -> None:
 # ANSI building blocks for conversation display
 _GOLD = "\033[1;38;2;255;215;0m"  # True-color #FFD700 bold — matches Rich Panel gold
 _BOLD = "\033[1m"
+_ITALIC = "\033[3m"
+_UNDERLINE = "\033[4m"
 _DIM = "\033[2m"
 _RST = "\033[0m"
 
@@ -829,6 +832,42 @@ def _rich_text_from_ansi(text: str) -> _RichText:
     ``[not markup]`` while still interpreting real ANSI color codes.
     """
     return _RichText.from_ansi(text or "")
+
+
+def _render_assistant_response(text: str):
+    """Render assistant responses with markdown when appropriate.
+
+    Final answers often contain light markdown for hierarchy: bold labels,
+    italic emphasis, inline code, and bullet lists.  Without markdown
+    rendering the CLI shows the raw markers, which feels noisy and unfinished.
+    Preserve ANSI verbatim when it is present; otherwise upgrade markdown-like
+    content to a Rich Markdown renderable.
+    """
+    import re
+
+    content = text or ""
+    if not content:
+        return _RichText("")
+
+    if re.search(r"\x1b\[[0-9;]*[A-Za-z]", content):
+        return _rich_text_from_ansi(content)
+
+    stripped = content.strip()
+    markdown_like = (
+        "```" in stripped
+        or bool(re.search(r"(^|\n)#{1,6}\s+\S", stripped))
+        or bool(re.search(r"(^|\n)\s*(?:[-*+] |\d+\. )\S", stripped))
+        or "**" in stripped
+        or "__" in stripped
+        or bool(re.search(r"(^|[^*])\*[^*\n]+\*(?!\*)", stripped))
+        or bool(re.search(r"(^|\n)>\s+\S", stripped))
+        or "`" in stripped
+    )
+
+    if markdown_like:
+        return Markdown(stripped)
+
+    return _RichText(stripped)
 
 
 def _cprint(text: str):
@@ -963,21 +1002,58 @@ COMPACT_BANNER = """
 
 
 def _build_compact_banner() -> str:
-    """Build a compact banner that fits the current terminal width."""
+    """Build a compact banner that fits the current terminal width.
+
+    Keep the copy readable on narrow terminals by reflowing whole phrases
+    across multiple rows instead of truncating words mid-line.
+    """
     w = min(shutil.get_terminal_size().columns - 2, 64)
     if w < 30:
         return "\n[#FFBF00]⚕ NOUS HERMES[/] [dim #B8860B]- Nous Research[/]\n"
-    inner = w - 2  # inside the box border
+
+    content_width = max(12, w - 2)
+
+    heading = "⚕ NOUS HERMES"
+    subtitle = "AI Agent Framework"
+    tagline = "Messenger of the Digital Gods"
+    brand = "Nous Research"
+
+    lines = [heading, subtitle, tagline, brand]
+
+    # Prefer fewer rows when there is room, but keep the semantic grouping
+    # stable: title + subtitle on top, tagline + brand on the bottom.
+    heading_line = f"{heading} - {subtitle}"
+    if len(heading_line) <= content_width:
+        lines = [heading_line, tagline, brand]
+
+    footer_line = f"{tagline}  ·  {brand}"
+    if len(footer_line) <= content_width:
+        lines = [lines[0], footer_line] if len(lines) == 3 else [heading, subtitle, footer_line]
+
+    # Fallback: if a custom phrase ever exceeds the available width, wrap it
+    # on word boundaries and keep the resulting rows in order.
+    wrapped_lines: list[str] = []
+    for line in lines:
+        wrapped = textwrap.wrap(
+            line,
+            width=content_width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+        wrapped_lines.extend(wrapped or [line])
+
     bar = "═" * w
-    line1 = "⚕ NOUS HERMES - AI Agent Framework"
-    line2 = "Messenger of the Digital Gods  ·  Nous Research"
-    # Truncate and pad to fit
-    line1 = line1[:inner - 2].ljust(inner - 2)
-    line2 = line2[:inner - 2].ljust(inner - 2)
+    rendered_lines = []
+    for idx, line in enumerate(wrapped_lines):
+        style = "[#FFBF00]" if idx == 0 else "[dim #B8860B]"
+        rendered_lines.append(
+            f"[bold #FFD700]║[/] {style}{line.ljust(content_width)}[/] [bold #FFD700]║[/]"
+        )
+
+    body = "\n".join(rendered_lines)
     return (
         f"\n[bold #FFD700]╔{bar}╗[/]\n"
-        f"[bold #FFD700]║[/] [#FFBF00]{line1}[/] [bold #FFD700]║[/]\n"
-        f"[bold #FFD700]║[/] [dim #B8860B]{line2}[/] [bold #FFD700]║[/]\n"
+        f"{body}\n"
         f"[bold #FFD700]╚{bar}╝[/]\n"
     )
 
@@ -1942,6 +2018,51 @@ class HermesCLI:
                 self._stream_prefilt = self._stream_prefilt[-max_tag_len:]
             return
 
+    def _format_streamed_response_line(self, line: str, base_ansi: str = "") -> str:
+        """Apply lightweight markdown styling to a streamed response line.
+
+        Full Rich markdown rendering only happens for non-streamed panels. For the
+        live token stream, keep things cheap and stable: style headings, bold,
+        italics, and inline code without showing raw markdown markers.
+        """
+        import re
+
+        if not line:
+            return line
+
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            self._stream_in_code_fence = not getattr(self, "_stream_in_code_fence", False)
+            return line
+
+        if getattr(self, "_stream_in_code_fence", False):
+            return line
+
+        reset = f"{_RST}{base_ansi}" if base_ansi else _RST
+        heading = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if heading:
+            depth = len(heading.group(1))
+            marker = "◆ " if depth <= 2 else "◇ "
+            return f"{_BOLD}{marker}{heading.group(2)}{reset}"
+
+        rendered = line
+        rendered = re.sub(
+            r"`([^`\n]+)`",
+            lambda m: f"{_UNDERLINE}{m.group(1)}{reset}",
+            rendered,
+        )
+        rendered = re.sub(
+            r"\*\*([^*\n]+)\*\*|__([^_\n]+)__",
+            lambda m: f"{_BOLD}{m.group(1) or m.group(2)}{reset}",
+            rendered,
+        )
+        rendered = re.sub(
+            r"(?<!\*)\*([^*\n]+)\*(?!\*)|(?<!_)_([^_\n]+)_(?!_)",
+            lambda m: f"{_ITALIC}{m.group(1) or m.group(2)}{reset}",
+            rendered,
+        )
+        return rendered
+
     def _emit_stream_text(self, text: str) -> None:
         """Emit filtered text to the streaming display."""
         if not text:
@@ -1984,7 +2105,8 @@ class HermesCLI:
         _tc = getattr(self, "_stream_text_ansi", "")
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)
-            _cprint(f"{_tc}{line}{_RST}" if _tc else line)
+            rendered = self._format_streamed_response_line(line, _tc)
+            _cprint(f"{_tc}{rendered}{_RST}" if _tc else rendered)
 
     def _flush_stream(self) -> None:
         """Emit any remaining partial line from the stream buffer and close the box."""
@@ -1993,7 +2115,8 @@ class HermesCLI:
 
         if self._stream_buf:
             _tc = getattr(self, "_stream_text_ansi", "")
-            _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
+            rendered = self._format_streamed_response_line(self._stream_buf, _tc)
+            _cprint(f"{_tc}{rendered}{_RST}" if _tc else rendered)
             self._stream_buf = ""
 
         # Close the response box
@@ -2013,6 +2136,7 @@ class HermesCLI:
         self._reasoning_box_opened = False
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
+        self._stream_in_code_fence = False
 
     def _slow_command_status(self, command: str) -> str:
         """Return a user-facing status message for slower slash commands."""
@@ -4627,7 +4751,7 @@ class HermesCLI:
 
                     _chat_console = ChatConsole()
                     _chat_console.print(Panel(
-                        _rich_text_from_ansi(response),
+                        _render_assistant_response(response),
                         title=f"[{_resp_color} bold]{label} (background #{task_num})[/]",
                         title_align="left",
                         border_style=_resp_color,
@@ -4750,7 +4874,7 @@ class HermesCLI:
                         _resp_color = "#4F6D4A"
 
                     ChatConsole().print(Panel(
-                        _rich_text_from_ansi(response),
+                        _render_assistant_response(response),
                         title=f"[{_resp_color} bold]⚕ /btw[/]",
                         title_align="left",
                         border_style=_resp_color,
@@ -6538,7 +6662,7 @@ class HermesCLI:
                 else:
                     _chat_console = ChatConsole()
                     _chat_console.print(Panel(
-                        _rich_text_from_ansi(response),
+                        _render_assistant_response(response),
                         title=f"[{_resp_color} bold]{label}[/]",
                         title_align="left",
                         border_style=_resp_color,
