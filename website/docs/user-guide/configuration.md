@@ -875,6 +875,8 @@ voice:
 
 Use `/voice on` in the CLI to enable microphone mode, `record_key` to start/stop recording, and `/voice tts` to toggle spoken replies. See [Voice Mode](/docs/user-guide/features/voice-mode) for end-to-end setup and platform-specific behavior.
 
+Hermes does not support a `voice.hold_to_talk` setting. CLI voice mode uses the configured `record_key` as a push-to-talk toggle.
+
 ## Streaming
 
 Stream tokens to the terminal or messaging platforms as they arrive, instead of waiting for the full response.

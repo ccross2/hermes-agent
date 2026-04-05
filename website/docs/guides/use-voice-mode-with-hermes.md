@@ -220,6 +220,8 @@ Workflow:
 5. if TTS is on, it speaks the answer
 6. the loop can automatically restart for continuous use
 
+Hermes CLI voice mode is push-to-talk only. There is no `hold_to_talk` config flag.
+
 ### Useful commands
 
 ```text

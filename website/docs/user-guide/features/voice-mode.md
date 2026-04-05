@@ -138,6 +138,8 @@ This loop continues until you press **Ctrl+B** during recording (exits continuou
 
 :::tip
 The record key is configurable via `voice.record_key` in `~/.hermes/config.yaml` (default: `ctrl+b`).
+
+Hermes CLI voice mode is push-to-talk only. There is no `hold_to_talk` option.
 :::
 
 ### Silence Detection
