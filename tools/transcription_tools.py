@@ -92,9 +92,14 @@ _local_model_name: Optional[str] = None
 
 
 def get_stt_model_from_config() -> Optional[str]:
-    """Read the STT model name from ~/.hermes/config.yaml.
+    """Read the provider-appropriate STT model from ~/.hermes/config.yaml.
 
-    Returns the value of ``stt.model`` if present, otherwise ``None``.
+    Preference order:
+    - local provider -> ``stt.local.model``
+    - groq provider -> ``stt.groq.model`` or ``stt.model``
+    - openai provider -> ``stt.openai.model`` or ``stt.model``
+    - unknown / no provider -> ``stt.model``
+
     Silently returns ``None`` on any error (missing file, bad YAML, etc.).
     """
     try:
@@ -103,7 +108,15 @@ def get_stt_model_from_config() -> Optional[str]:
         if cfg_path.exists():
             with open(cfg_path) as f:
                 data = yaml.safe_load(f) or {}
-            return data.get("stt", {}).get("model")
+            stt = data.get("stt", {}) or {}
+            provider = stt.get("provider")
+            if provider == "local":
+                return (stt.get("local", {}) or {}).get("model") or stt.get("model")
+            if provider == "groq":
+                return (stt.get("groq", {}) or {}).get("model") or stt.get("model")
+            if provider == "openai":
+                return (stt.get("openai", {}) or {}).get("model") or stt.get("model")
+            return stt.get("model")
     except Exception:
         pass
     return None

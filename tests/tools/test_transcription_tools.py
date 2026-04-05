@@ -829,6 +829,22 @@ class TestGetSttModelFromConfig:
         from tools.transcription_tools import get_stt_model_from_config
         assert get_stt_model_from_config() == "whisper-large-v3"
 
+    def test_returns_local_model_for_local_provider(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("stt:\n  provider: local\n  model: whisper-1\n  local:\n    model: small.en\n")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+        from tools.transcription_tools import get_stt_model_from_config
+        assert get_stt_model_from_config() == "small.en"
+
+    def test_returns_openai_model_for_openai_provider(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("stt:\n  provider: openai\n  model: whisper-1\n  openai:\n    model: gpt-4o-mini-transcribe\n")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+        from tools.transcription_tools import get_stt_model_from_config
+        assert get_stt_model_from_config() == "gpt-4o-mini-transcribe"
+
     def test_returns_none_when_no_stt_section(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config.yaml"
         cfg.write_text("tts:\n  provider: edge\n")
