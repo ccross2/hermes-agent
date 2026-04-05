@@ -106,6 +106,9 @@ DEFAULT_CONTEXT_LENGTHS = {
     "claude": 200000,
     # OpenAI
     "gpt-4.1": 1047576,
+    "gpt-5.4-pro": 1000000,
+    "gpt-5.4-mini": 1000000,
+    "gpt-5.4": 1000000,
     "gpt-5": 128000,
     "gpt-4": 128000,
     # Google
