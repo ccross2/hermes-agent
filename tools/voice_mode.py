@@ -28,13 +28,86 @@ logger = logging.getLogger(__name__)
 # in headless environments (SSH, Docker, WSL, no PortAudio).
 # ---------------------------------------------------------------------------
 
+_NIX_PORTAUDIO_HINT: Optional[str] = None
+
+
+def _nix_portaudio_lib_path() -> Optional[str]:
+    """Best-effort discovery of libportaudio on Nix-based systems.
+
+    ``sounddevice`` relies on ``ctypes.util.find_library('portaudio')`` which can
+    fail on NixOS because there is no traditional ldconfig cache. When that
+    happens, we can still import ``sounddevice`` by pointing find_library at the
+    concrete Nix store path.
+    """
+    global _NIX_PORTAUDIO_HINT
+    if _NIX_PORTAUDIO_HINT is not None:
+        return _NIX_PORTAUDIO_HINT or None
+
+    override = os.environ.get("HERMES_PORTAUDIO_LIB", "").strip()
+    if override:
+        _NIX_PORTAUDIO_HINT = override
+        return override
+
+    ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+    for entry in ld_path.split(":"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        candidate = os.path.join(entry, "libportaudio.so")
+        if os.path.exists(candidate):
+            _NIX_PORTAUDIO_HINT = candidate
+            return candidate
+
+    if shutil.which("nix"):
+        try:
+            out = subprocess.check_output(
+                ["nix", "eval", "--raw", "nixpkgs#portaudio.outPath"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5,
+            ).strip()
+            candidate = os.path.join(out, "lib", "libportaudio.so")
+            if os.path.exists(candidate):
+                _NIX_PORTAUDIO_HINT = candidate
+                return candidate
+        except Exception:
+            pass
+
+    _NIX_PORTAUDIO_HINT = ""
+    return None
+
+
 def _import_audio():
     """Lazy-import sounddevice and numpy.  Returns (sd, np).
 
     Raises ImportError or OSError if the libraries are not available
     (e.g. PortAudio missing on headless servers).
     """
-    import sounddevice as sd
+    try:
+        import sounddevice as sd
+    except OSError as exc:
+        if "portaudio" not in str(exc).lower():
+            raise
+
+        lib_path = _nix_portaudio_lib_path()
+        if not lib_path:
+            raise
+
+        try:
+            import ctypes.util as _ctypes_util
+
+            _orig_find_library = _ctypes_util.find_library
+
+            def _patched_find_library(name: str):
+                if name == "portaudio":
+                    return lib_path
+                return _orig_find_library(name)
+
+            _ctypes_util.find_library = _patched_find_library
+            import sounddevice as sd
+        except Exception:
+            raise exc
+
     import numpy as np
     return sd, np
 

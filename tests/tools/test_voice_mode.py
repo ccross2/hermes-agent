@@ -1,5 +1,7 @@
 """Tests for tools.voice_mode -- all mocked, no real microphone or API calls."""
 
+import builtins
+import ctypes.util
 import os
 import struct
 import time
@@ -73,6 +75,47 @@ class TestDetectAudioEnvironment:
         result = detect_audio_environment()
         assert result["available"] is True
         assert result["warnings"] == []
+
+    def test_nix_portaudio_path_uses_override(self, monkeypatch, tmp_path):
+        portaudio = tmp_path / "libportaudio.so"
+        portaudio.write_text("fake")
+        monkeypatch.setattr("tools.voice_mode._NIX_PORTAUDIO_HINT", None)
+        monkeypatch.setenv("HERMES_PORTAUDIO_LIB", str(portaudio))
+
+        from tools.voice_mode import _nix_portaudio_lib_path
+
+        assert _nix_portaudio_lib_path() == str(portaudio)
+
+    def test_import_audio_retries_with_nix_portaudio_hint(self, monkeypatch, tmp_path):
+        portaudio = tmp_path / "libportaudio.so"
+        portaudio.write_text("fake")
+        attempts = []
+        real_import = builtins.__import__
+        real_find_library = ctypes.util.find_library
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "sounddevice":
+                attempts.append(ctypes.util.find_library("portaudio"))
+                if len(attempts) == 1:
+                    raise OSError("PortAudio library not found")
+                return MagicMock()
+            if name == "numpy":
+                return MagicMock()
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr("tools.voice_mode._NIX_PORTAUDIO_HINT", None)
+        monkeypatch.setenv("HERMES_PORTAUDIO_LIB", str(portaudio))
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setattr(ctypes.util, "find_library", real_find_library)
+
+        from tools.voice_mode import _import_audio
+
+        sd, np = _import_audio()
+
+        assert sd is not None
+        assert np is not None
+        assert attempts[0] != str(portaudio)
+        assert attempts[1] == str(portaudio)
 
     def test_ssh_blocks_voice(self, monkeypatch):
         """SSH environment should block voice mode."""
