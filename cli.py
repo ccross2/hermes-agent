@@ -5538,6 +5538,8 @@ class HermesCLI:
                     _cprint(f"  Queued: {payload[:80]}{'...' if len(payload) > 80 else ''}")
         elif canonical == "skin":
             self._handle_skin_command(cmd_original)
+        elif canonical == "presentation":
+            self._handle_presentation_command(cmd_original)
         elif canonical == "voice":
             self._handle_voice_command(cmd_original)
         else:
@@ -6188,6 +6190,33 @@ class HermesCLI:
         print("  Note: banner colors will update on next session start.")
         if self._apply_tui_skin_style():
             print("  Prompt + TUI colors updated.")
+
+    def _handle_presentation_command(self, cmd: str):
+        """Handle /presentation [classic|claude_code] — show or change live presentation mode."""
+        parts = cmd.strip().split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            print(f"  Current presentation mode: {getattr(self, 'presentation_mode', CLASSIC_PRESENTATION)}")
+            print("  Available: classic, claude_code")
+            print("  Usage: /presentation <classic|claude_code>")
+            return
+
+        requested = parts[1].strip().lower().replace("-", "_")
+        normalized = normalize_presentation_mode(requested)
+        valid = {CLASSIC_PRESENTATION, "claude_code"}
+        if requested not in valid:
+            print(f"  Unknown presentation mode: {parts[1].strip()}")
+            print("  Available: classic, claude_code")
+            return
+
+        self.presentation_mode = normalized
+        if save_config_value("display.presentation_mode", normalized):
+            print(f"  Presentation mode set to: {normalized} (saved)")
+        else:
+            print(f"  Presentation mode set to: {normalized}")
+
+        if hasattr(self, '_invalidate'):
+            self._invalidate(min_interval=0.0)
+            print("  TUI refreshed.")
 
     def _toggle_verbose(self):
         """Cycle tool progress mode: off → new → all → verbose → off."""
