@@ -97,6 +97,9 @@ COMMAND_REGISTRY: list[CommandDef] = [
                subcommands=("none", "low", "minimal", "medium", "high", "xhigh", "show", "hide", "on", "off")),
     CommandDef("skin", "Show or change the display skin/theme", "Configuration",
                cli_only=True, args_hint="[name]"),
+    CommandDef("presentation", "Show or change the terminal presentation mode", "Configuration",
+               cli_only=True, args_hint="[classic|claude_code]", aliases=("ui",),
+               subcommands=("classic", "claude_code", "claude-code")),
     CommandDef("voice", "Toggle voice mode", "Configuration",
                args_hint="[on|off|tts|status]", subcommands=("on", "off", "tts", "status")),
 
