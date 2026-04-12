@@ -377,6 +377,14 @@ _SERVICE_BASE = "hermes-gateway"
 SERVICE_DESCRIPTION = "Hermes Agent Gateway - Messaging Platform Integration"
 
 
+def _resolve_kill_path() -> str:
+    """Return an absolute path to `kill` that works in systemd units on NixOS too."""
+    nix_kill = Path("/run/current-system/sw/bin/kill")
+    if nix_kill.exists():
+        return str(nix_kill)
+    return shutil.which("kill") or "/usr/bin/kill"
+
+
 def _profile_suffix() -> str:
     """Derive a service-name suffix from the current HERMES_HOME.
 
@@ -857,6 +865,7 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
         path_entries.extend(_build_user_local_paths(Path(home_dir), path_entries))
         path_entries.extend(common_bin_paths)
         sane_path = ":".join(path_entries)
+        kill_path = _resolve_kill_path()
         return f"""[Unit]
 Description={SERVICE_DESCRIPTION}
 After=network-online.target
@@ -881,7 +890,7 @@ RestartSec=30
 RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}
 KillMode=mixed
 KillSignal=SIGTERM
-ExecReload=/bin/kill -USR1 $MAINPID
+ExecReload={kill_path} -USR1 $MAINPID
 TimeoutStopSec={restart_timeout}
 StandardOutput=journal
 StandardError=journal
@@ -895,6 +904,7 @@ WantedBy=multi-user.target
     path_entries.extend(_build_user_local_paths(Path.home(), path_entries))
     path_entries.extend(common_bin_paths)
     sane_path = ":".join(path_entries)
+    kill_path = _resolve_kill_path()
     return f"""[Unit]
 Description={SERVICE_DESCRIPTION}
 After=network.target
@@ -913,7 +923,7 @@ RestartSec=30
 RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}
 KillMode=mixed
 KillSignal=SIGTERM
-ExecReload=/bin/kill -USR1 $MAINPID
+ExecReload={kill_path} -USR1 $MAINPID
 TimeoutStopSec={restart_timeout}
 StandardOutput=journal
 StandardError=journal

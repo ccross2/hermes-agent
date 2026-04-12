@@ -89,9 +89,22 @@ class TestGeneratedSystemdUnits:
 
         assert "ExecStart=" in unit
         assert "ExecStop=" not in unit
-        assert "ExecReload=/bin/kill -USR1 $MAINPID" in unit
+        assert "ExecReload=" in unit
+        assert " -USR1 $MAINPID" in unit
         assert f"RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}" in unit
         assert "TimeoutStopSec=60" in unit
+
+    def test_resolve_kill_path_prefers_nixos_system_path(self, monkeypatch):
+        monkeypatch.setattr(gateway_cli.Path, "exists", lambda self: str(self) == "/run/current-system/sw/bin/kill")
+        monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: "/usr/bin/kill")
+
+        assert gateway_cli._resolve_kill_path() == "/run/current-system/sw/bin/kill"
+
+    def test_resolve_kill_path_falls_back_to_usr_bin(self, monkeypatch):
+        monkeypatch.setattr(gateway_cli.Path, "exists", lambda self: False)
+        monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: None)
+
+        assert gateway_cli._resolve_kill_path() == "/usr/bin/kill"
 
     def test_user_unit_includes_resolved_node_directory_in_path(self, monkeypatch):
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: "/home/test/.nvm/versions/node/v24.14.0/bin/node" if cmd == "node" else None)
@@ -105,7 +118,8 @@ class TestGeneratedSystemdUnits:
 
         assert "ExecStart=" in unit
         assert "ExecStop=" not in unit
-        assert "ExecReload=/bin/kill -USR1 $MAINPID" in unit
+        assert "ExecReload=" in unit
+        assert " -USR1 $MAINPID" in unit
         assert f"RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}" in unit
         assert "TimeoutStopSec=60" in unit
         assert "WantedBy=multi-user.target" in unit
