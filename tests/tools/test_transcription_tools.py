@@ -819,58 +819,52 @@ class TestTranscribeAudioDispatch:
 # ============================================================================
 # get_stt_model_from_config
 # ============================================================================
+#
+# Post-0.9 merge: get_stt_model_from_config() now uses _load_stt_config()
+# (which wraps hermes_cli.config.load_config) instead of reading YAML
+# directly. The original ccross2 tests used HERMES_HOME + file writes,
+# which no longer match how config is actually loaded (DEFAULT_CONFIG gets
+# merged in, so stt.local.model="base" always appears). We mock
+# _load_stt_config directly instead.
 
 class TestGetSttModelFromConfig:
-    def test_returns_model_from_config(self, tmp_path, monkeypatch):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("stt:\n  model: whisper-large-v3\n")
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-
+    def test_explicit_stt_model_wins(self):
+        from unittest.mock import patch
         from tools.transcription_tools import get_stt_model_from_config
-        assert get_stt_model_from_config() == "whisper-large-v3"
+        with patch("tools.transcription_tools._load_stt_config",
+                   return_value={"model": "whisper-large-v3"}):
+            assert get_stt_model_from_config() == "whisper-large-v3"
 
-    def test_returns_local_model_for_local_provider(self, tmp_path, monkeypatch):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("stt:\n  provider: local\n  model: whisper-1\n  local:\n    model: small.en\n")
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-
+    def test_explicit_stt_model_wins_over_per_provider(self):
+        # User-set stt.model should win over per-provider defaults like
+        # stt.local.model. This prevents DEFAULT_CONFIG's "base" from
+        # silently shadowing an explicit user choice.
+        from unittest.mock import patch
         from tools.transcription_tools import get_stt_model_from_config
-        assert get_stt_model_from_config() == "small.en"
+        with patch("tools.transcription_tools._load_stt_config",
+                   return_value={"model": "whisper-large-v3",
+                                 "provider": "local",
+                                 "local": {"model": "base"}}):
+            assert get_stt_model_from_config() == "whisper-large-v3"
 
-    def test_returns_openai_model_for_openai_provider(self, tmp_path, monkeypatch):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("stt:\n  provider: openai\n  model: whisper-1\n  openai:\n    model: gpt-4o-mini-transcribe\n")
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-
+    def test_falls_back_to_per_provider_model_when_no_explicit_model(self):
+        from unittest.mock import patch
         from tools.transcription_tools import get_stt_model_from_config
-        assert get_stt_model_from_config() == "gpt-4o-mini-transcribe"
+        with patch("tools.transcription_tools._load_stt_config",
+                   return_value={"provider": "local",
+                                 "local": {"model": "small.en"}}):
+            assert get_stt_model_from_config() == "small.en"
 
-    def test_returns_none_when_no_stt_section(self, tmp_path, monkeypatch):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("tts:\n  provider: edge\n")
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-
+    def test_returns_none_when_config_empty(self):
+        from unittest.mock import patch
         from tools.transcription_tools import get_stt_model_from_config
-        assert get_stt_model_from_config() is None
+        with patch("tools.transcription_tools._load_stt_config",
+                   return_value={}):
+            assert get_stt_model_from_config() is None
 
-    def test_returns_none_when_no_config_file(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-
+    def test_returns_none_when_no_model_and_no_provider(self):
+        from unittest.mock import patch
         from tools.transcription_tools import get_stt_model_from_config
-        assert get_stt_model_from_config() is None
-
-    def test_returns_none_on_invalid_yaml(self, tmp_path, monkeypatch):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(": : :\n  bad yaml [[[")
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-
-        from tools.transcription_tools import get_stt_model_from_config
-        assert get_stt_model_from_config() is None
-
-    def test_returns_none_when_model_key_missing(self, tmp_path, monkeypatch):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("stt:\n  enabled: true\n")
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-
-        from tools.transcription_tools import get_stt_model_from_config
-        assert get_stt_model_from_config() is None
+        with patch("tools.transcription_tools._load_stt_config",
+                   return_value={"enabled": True}):
+            assert get_stt_model_from_config() is None
