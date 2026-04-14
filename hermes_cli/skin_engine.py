@@ -96,7 +96,6 @@ Activate with ``/skin <name>`` in the CLI or ``display.skin: <name>`` in config.
 """
 
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -126,10 +125,6 @@ class SkinConfig:
     def get_color(self, key: str, fallback: str = "") -> str:
         """Get a color value with fallback."""
         return self.colors.get(key, fallback)
-
-    def get_spinner_list(self, key: str) -> List[str]:
-        """Get a spinner list (faces, verbs, etc.)."""
-        return self.spinner.get(key, [])
 
     def get_spinner_wings(self) -> List[Tuple[str, str]]:
         """Get spinner wing pairs, or empty list if none."""
