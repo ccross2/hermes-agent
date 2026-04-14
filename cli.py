@@ -67,6 +67,28 @@ from hermes_cli.banner import _format_context_length, format_banner_version_labe
 
 _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
+# Presentation mode constants used by the /presentation (alias /ui) command.
+# Backs the live-toggle UI added in commit 85b86fa1; before this, the command
+# referenced these names without defining them and always raised NameError.
+CLASSIC_PRESENTATION = "classic"
+CLAUDE_CODE_PRESENTATION = "claude_code"
+VALID_PRESENTATION_MODES = frozenset({CLASSIC_PRESENTATION, CLAUDE_CODE_PRESENTATION})
+
+
+def normalize_presentation_mode(raw: str) -> str:
+    """Fold user input to canonical presentation mode strings.
+
+    Accepts common variants (dash/underscore, case, aliases like "claude-code"
+    or "cc") and returns one of VALID_PRESENTATION_MODES or the input lower-
+    cased when no alias matches (caller is responsible for the final
+    validation).
+    """
+    if not raw:
+        return CLASSIC_PRESENTATION
+    normalized = raw.strip().lower().replace("-", "_")
+    aliases = {"cc": CLAUDE_CODE_PRESENTATION, "claudecode": CLAUDE_CODE_PRESENTATION}
+    return aliases.get(normalized, normalized)
+
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
@@ -6175,10 +6197,8 @@ class HermesCLI:
             print("  Usage: /presentation <classic|claude_code>")
             return
 
-        requested = parts[1].strip().lower().replace("-", "_")
-        normalized = normalize_presentation_mode(requested)
-        valid = {CLASSIC_PRESENTATION, "claude_code"}
-        if requested not in valid:
+        normalized = normalize_presentation_mode(parts[1])
+        if normalized not in VALID_PRESENTATION_MODES:
             print(f"  Unknown presentation mode: {parts[1].strip()}")
             print("  Available: classic, claude_code")
             return
