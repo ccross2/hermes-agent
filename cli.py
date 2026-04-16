@@ -64,6 +64,15 @@ from agent.usage_pricing import (
     format_token_count_compact,
 )
 from hermes_cli.banner import _format_context_length, format_banner_version_label
+from hermes_cli.presentation import (
+    CLASSIC_PRESENTATION,
+    approval_label,
+    is_claude_code_mode,
+    normalize_presentation_mode,
+    shell_count_label,
+    summarize_tool_activity,
+    workspace_label,
+)
 
 _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
@@ -1643,6 +1652,9 @@ class HermesCLI:
         self.busy_input_mode = "queue" if str(_bim).strip().lower() == "queue" else "interrupt"
 
         self.verbose = verbose if verbose is not None else (self.tool_progress_mode == "verbose")
+        self.presentation_mode = normalize_presentation_mode(
+            CLI_CONFIG["display"].get("presentation_mode", CLASSIC_PRESENTATION)
+        )
         
         # streaming: stream tokens to the terminal as they arrive (display.streaming in config.yaml)
         self.streaming_enabled = CLI_CONFIG["display"].get("streaming", False)
@@ -1919,6 +1931,9 @@ class HermesCLI:
             "session_total_tokens": 0,
             "session_api_calls": 0,
             "compressions": 0,
+            "workspace_label": workspace_label(),
+            "approval_label": approval_label(getattr(self, "_approval_state", None)),
+            "shell_count_label": shell_count_label(getattr(self, "_background_tasks", {})),
         }
 
         if not agent:
@@ -2066,6 +2081,28 @@ class HermesCLI:
             percent_label = f"{percent}%" if percent is not None else "--"
             duration_label = snapshot["duration"]
 
+            if is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                if snapshot["context_length"]:
+                    ctx_total = _format_context_length(snapshot["context_length"])
+                    ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                    context_label = f"{ctx_used}/{ctx_total}"
+                else:
+                    context_label = "ctx --"
+
+                if width < 76:
+                    parts = [f"⚕ {snapshot['model_short']}", snapshot["workspace_label"], duration_label]
+                    return self._trim_status_bar_text(" · ".join(parts), width)
+
+                parts = [
+                    f"⚕ {snapshot['model_short']}",
+                    snapshot["workspace_label"],
+                    context_label,
+                    snapshot["approval_label"],
+                    snapshot["shell_count_label"],
+                    duration_label,
+                ]
+                return self._trim_status_bar_text(" │ ".join(parts), width)
+
             if width < 52:
                 text = f"⚕ {snapshot['model_short']} · {duration_label}"
                 return self._trim_status_bar_text(text, width)
@@ -2087,6 +2124,17 @@ class HermesCLI:
         except Exception:
             return f"⚕ {self.model if getattr(self, 'model', None) else 'Hermes'}"
 
+    def _get_activity_fragments(self):
+        txt = getattr(self, "_spinner_text", "")
+        if not txt:
+            return []
+        if is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+            return [
+                ("class:activity-accent", "  ● "),
+                ("class:activity-text", txt),
+            ]
+        return [("class:hint", f"  {txt}")]
+
     def _get_status_bar_fragments(self):
         if not self._status_bar_visible or getattr(self, '_model_picker_state', None):
             return []
@@ -2099,6 +2147,35 @@ class HermesCLI:
             # line and produce duplicated status bar rows over long sessions.
             width = self._get_tui_terminal_width()
             duration_label = snapshot["duration"]
+
+            if is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                if snapshot["context_length"]:
+                    ctx_total = _format_context_length(snapshot["context_length"])
+                    ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                    context_label = f"{ctx_used}/{ctx_total}"
+                else:
+                    context_label = "ctx --"
+
+                frags = [
+                    ("class:status-bar", " ⚕ "),
+                    ("class:status-bar-strong", snapshot["model_short"]),
+                    ("class:status-bar-dim", " │ "),
+                    ("class:status-bar-strong", snapshot["workspace_label"]),
+                    ("class:status-bar-dim", " │ "),
+                    ("class:status-bar-dim", context_label),
+                    ("class:status-bar-dim", " │ "),
+                    ("class:status-bar-warn", snapshot["approval_label"]),
+                    ("class:status-bar-dim", " │ "),
+                    ("class:status-bar-good", snapshot["shell_count_label"]),
+                    ("class:status-bar-dim", " │ "),
+                    ("class:status-bar-dim", duration_label),
+                    ("class:status-bar", " "),
+                ]
+                plain_text = "".join(text for _, text in frags)
+                if self._status_bar_display_width(plain_text) > width:
+                    trimmed = self._trim_status_bar_text(plain_text, width)
+                    return [("class:status-bar", trimmed)]
+                return frags
 
             if width < 52:
                 frags = [
@@ -2594,9 +2671,10 @@ class HermesCLI:
                 self._stream_text_ansi = f"\033[38;2;{_r};{_g};{_b}m"
             except (ValueError, IndexError):
                 self._stream_text_ansi = ""
-            w = shutil.get_terminal_size().columns
-            fill = w - 2 - len(label)
-            _cprint(f"\n{_ACCENT}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
+            if not is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                w = shutil.get_terminal_size().columns
+                fill = w - 2 - len(label)
+                _cprint(f"\n{_ACCENT}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
 
         self._stream_buf += text
 
@@ -2625,7 +2703,7 @@ class HermesCLI:
             self._stream_buf = ""
 
         # Close the response box
-        if self._stream_box_opened:
+        if self._stream_box_opened and not is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
             w = shutil.get_terminal_size().columns
             _cprint(f"{_ACCENT}╰{'─' * (w - 2)}╯{_RST}")
 
@@ -6779,14 +6857,17 @@ class HermesCLI:
             return
         if function_name and not function_name.startswith("_"):
             import time as _time
-            from agent.display import get_tool_emoji
-            emoji = get_tool_emoji(function_name)
             label = preview or function_name
             from agent.display import get_tool_preview_max_len
             _pl = get_tool_preview_max_len()
             if _pl > 0 and len(label) > _pl:
                 label = label[:_pl - 3] + "..."
-            self._spinner_text = f"{emoji} {label}"
+            if is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                self._spinner_text = summarize_tool_activity(function_name, label)
+            else:
+                from agent.display import get_tool_emoji
+                emoji = get_tool_emoji(function_name)
+                self._spinner_text = f"{emoji} {label}"
             self._tool_start_time = _time.monotonic()
             # Store args for stacked scrollback line on completion
             self._pending_tool_info.setdefault(function_name, []).append(
@@ -8176,6 +8257,8 @@ class HermesCLI:
     def _build_tui_style_dict(self) -> dict[str, str]:
         """Layer the active skin's prompt_toolkit colors over the base TUI style."""
         style_dict = dict(getattr(self, "_tui_style_base", {}) or {})
+        style_dict.setdefault('activity-accent', '#87CEEB bold')
+        style_dict.setdefault('activity-text', '#C0C0C0')
         try:
             from hermes_cli.skin_engine import get_prompt_toolkit_style_overrides
             style_dict.update(get_prompt_toolkit_style_overrides())
@@ -9993,134 +10076,4 @@ def main(
     toolsets_list = None
     if toolsets:
         if isinstance(toolsets, str):
-            toolsets_list = [t.strip() for t in toolsets.split(",")]
-        elif isinstance(toolsets, (list, tuple)):
-            # Fire may pass multiple --toolsets as a tuple
-            toolsets_list = []
-            for t in toolsets:
-                if isinstance(t, str):
-                    toolsets_list.extend([x.strip() for x in t.split(",")])
-                else:
-                    toolsets_list.append(str(t))
-    else:
-        # Use the shared resolver so MCP servers are included at runtime
-        from hermes_cli.tools_config import _get_platform_tools
-        toolsets_list = sorted(_get_platform_tools(CLI_CONFIG, "cli"))
-    
-    parsed_skills = _parse_skills_argument(skills)
-
-    # Create CLI instance
-    cli = HermesCLI(
-        model=model,
-        toolsets=toolsets_list,
-        provider=provider,
-        api_key=api_key,
-        base_url=base_url,
-        max_turns=max_turns,
-        verbose=verbose,
-        compact=compact,
-        resume=resume,
-        checkpoints=checkpoints,
-        pass_session_id=pass_session_id,
-    )
-
-    if parsed_skills:
-        skills_prompt, loaded_skills, missing_skills = build_preloaded_skills_prompt(
-            parsed_skills,
-            task_id=cli.session_id,
-        )
-        if missing_skills:
-            missing_display = ", ".join(missing_skills)
-            raise ValueError(f"Unknown skill(s): {missing_display}")
-        if skills_prompt:
-            cli.system_prompt = "\n\n".join(
-                part for part in (cli.system_prompt, skills_prompt) if part
-            ).strip()
-            cli.preloaded_skills = loaded_skills
-
-    # Inject worktree context into agent's system prompt
-    if wt_info:
-        wt_note = (
-            f"\n\n[System note: You are working in an isolated git worktree at "
-            f"{wt_info['path']}. Your branch is `{wt_info['branch']}`. "
-            f"Changes here do not affect the main working tree or other agents. "
-            f"Remember to commit and push your changes, and create a PR if appropriate. "
-            f"The original repo is at {wt_info['repo_root']}.]"
-        )
-        cli.system_prompt = (cli.system_prompt or "") + wt_note
-    
-    # Handle list commands (don't init agent for these)
-    if list_tools:
-        cli.show_banner()
-        cli.show_tools()
-        sys.exit(0)
-    
-    if list_toolsets:
-        cli.show_banner()
-        cli.show_toolsets()
-        sys.exit(0)
-    
-    # Register cleanup for single-query mode (interactive mode registers in run())
-    atexit.register(_run_cleanup)
-    
-    # Handle single query mode
-    if query or image:
-        query, single_query_images = _collect_query_images(query, image)
-        if quiet:
-            # Quiet mode: suppress banner, spinner, tool previews.
-            # Only print the final response and parseable session info.
-            cli.tool_progress_mode = "off"
-            if cli._ensure_runtime_credentials():
-                effective_query = query
-                if single_query_images:
-                    effective_query = cli._preprocess_images_with_vision(
-                        query,
-                        single_query_images,
-                        announce=False,
-                    )
-                turn_route = cli._resolve_turn_agent_config(effective_query)
-                if turn_route["signature"] != cli._active_agent_route_signature:
-                    cli.agent = None
-                if cli._init_agent(
-                    model_override=turn_route["model"],
-                    runtime_override=turn_route["runtime"],
-                    route_label=turn_route["label"],
-                    request_overrides=turn_route.get("request_overrides"),
-                ):
-                    cli.agent.quiet_mode = True
-                    cli.agent.suppress_status_output = True
-                    # Suppress streaming display callbacks so stdout stays
-                    # machine-readable (no styled "Hermes" box, no tool-gen
-                    # status lines).  The response is printed once below.
-                    cli.agent.stream_delta_callback = None
-                    cli.agent.tool_gen_callback = None
-                    result = cli.agent.run_conversation(
-                        user_message=effective_query,
-                        conversation_history=cli.conversation_history,
-                    )
-                    response = result.get("final_response", "") if isinstance(result, dict) else str(result)
-                    if response:
-                        print(response)
-                    # Session ID goes to stderr so piped stdout is clean.
-                    print(f"\nsession_id: {cli.session_id}", file=sys.stderr)
-                    
-                    # Ensure proper exit code for automation wrappers
-                    sys.exit(1 if isinstance(result, dict) and result.get("failed") else 0)
-            
-            # Exit with error code if credentials or agent init fails
-            sys.exit(1)
-        else:
-            cli.show_banner()
-            _query_label = query or ("[image attached]" if single_query_images else "")
-            if _query_label:
-                cli.console.print(f"[bold blue]Query:[/] {_query_label}")
-            cli.chat(query, images=single_query_images or None)
-            cli._print_exit_summary()
-        return
-    
-    # Run interactive mode
-    cli.run()
-
-
-if __name__ == "__main__":
-    fire.Fire(main)
+            toolsets_li
