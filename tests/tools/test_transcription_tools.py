@@ -958,6 +958,53 @@ class TestGetProviderMistral:
             assert _get_provider({}) == "none"
 
 
+class TestGetSttModelFromConfig:
+    def test_returns_default_model_when_no_provider(self):
+        from tools.transcription_tools import get_stt_model_from_config
+
+        assert get_stt_model_from_config({"model": "whisper-large-v3"}) == "whisper-large-v3"
+
+    def test_returns_local_model_for_local_provider(self):
+        from tools.transcription_tools import get_stt_model_from_config
+
+        cfg = {
+            "provider": "local",
+            "model": "whisper-1",
+            "local": {"model": "small.en"},
+        }
+        assert get_stt_model_from_config(cfg) == "small.en"
+
+    def test_returns_local_model_for_local_command_provider(self):
+        from tools.transcription_tools import get_stt_model_from_config
+
+        cfg = {
+            "provider": "local_command",
+            "model": "whisper-1",
+            "local": {"model": "base"},
+        }
+        assert get_stt_model_from_config(cfg) == "base"
+
+    def test_returns_openai_model_for_openai_provider(self):
+        from tools.transcription_tools import get_stt_model_from_config
+
+        cfg = {
+            "provider": "openai",
+            "model": "whisper-1",
+            "openai": {"model": "gpt-4o-mini-transcribe"},
+        }
+        assert get_stt_model_from_config(cfg) == "gpt-4o-mini-transcribe"
+
+    def test_returns_groq_model_for_groq_provider(self):
+        from tools.transcription_tools import get_stt_model_from_config
+
+        cfg = {
+            "provider": "groq",
+            "model": "whisper-1",
+            "groq": {"model": "whisper-large-v3-turbo"},
+        }
+        assert get_stt_model_from_config(cfg) == "whisper-large-v3-turbo"
+
+
 # ============================================================================
 # transcribe_audio — Mistral dispatch
 # ============================================================================

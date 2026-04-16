@@ -161,6 +161,28 @@ def _check_gateway_service_linger(issues: list[str]) -> None:
         check_warn("Could not verify systemd linger", f"({linger_detail})")
 
 
+def _get_supported_command_targets(venv_bin: Path) -> list[Path]:
+    """Return acceptable hermes launcher targets for doctor checks."""
+    targets = [venv_bin.resolve()]
+    canonical_wrapper = Path.home() / ".engram" / "config" / "hermes" / "bin" / "hermes"
+    try:
+        if canonical_wrapper.exists():
+            targets.append(canonical_wrapper.resolve())
+    except OSError:
+        pass
+    return targets
+
+
+def _describe_command_target(target: Path, venv_bin: Path) -> str:
+    """Human-readable detail for accepted launcher targets."""
+    try:
+        if target == venv_bin.resolve():
+            return f"venv entry point ({venv_bin})"
+    except OSError:
+        pass
+    return f"Engram wrapper ({target})"
+
+
 def run_doctor(args):
     """Run diagnostic checks."""
     should_fix = getattr(args, 'fix', False)
@@ -555,13 +577,18 @@ def run_doctor(args):
             # Check the symlink at the command link location
             if _cmd_link.is_symlink():
                 _target = _cmd_link.resolve()
-                _expected = _venv_bin.resolve()
-                if _target == _expected:
-                    check_ok(f"{_cmd_link_display}/hermes → correct target")
+                _supported_targets = _get_supported_command_targets(_venv_bin)
+                if _target in _supported_targets:
+                    check_ok(
+                        f"{_cmd_link_display}/hermes → correct target",
+                        f"({_describe_command_target(_target, _venv_bin)})",
+                    )
                 else:
+                    _expected = _venv_bin.resolve()
+                    _expected_detail = _describe_command_target(_expected, _venv_bin)
                     check_warn(
                         f"{_cmd_link_display}/hermes points to wrong target",
-                        f"(→ {_target}, expected → {_expected})"
+                        f"(→ {_target}, expected → {_expected} [{_expected_detail}])"
                     )
                     if should_fix:
                         _cmd_link.unlink()

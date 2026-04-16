@@ -7053,12 +7053,11 @@ class HermesCLI:
                 self._app.invalidate()
             _cprint(f"{_DIM}Transcribing...{_RST}")
 
-            # Get STT model from config
+            # Get provider-appropriate STT model from config
             stt_model = None
             try:
-                from hermes_cli.config import load_config
-                stt_config = load_config().get("stt", {})
-                stt_model = stt_config.get("model")
+                from tools.transcription_tools import get_stt_model_from_config
+                stt_model = get_stt_model_from_config()
             except Exception:
                 pass
 

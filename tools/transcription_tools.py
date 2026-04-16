@@ -101,6 +101,23 @@ def _load_stt_config() -> dict:
         return {}
 
 
+def get_stt_model_from_config(stt_config: Optional[dict] = None) -> Optional[str]:
+    """Return the provider-appropriate STT model from config."""
+    if stt_config is None:
+        stt_config = _load_stt_config()
+
+    provider = (stt_config.get("provider") or "").strip().lower()
+    provider_section = None
+    if provider in {"local", "local_command", "groq", "openai", "mistral"}:
+        section_key = "local" if provider == "local_command" else provider
+        provider_section = stt_config.get(section_key, {}) or {}
+
+    if provider_section:
+        return provider_section.get("model") or stt_config.get("model")
+
+    return stt_config.get("model")
+
+
 def is_stt_enabled(stt_config: Optional[dict] = None) -> bool:
     """Return whether STT is enabled in config."""
     if stt_config is None:

@@ -49,6 +49,25 @@ class TestProviderEnvDetection:
         assert not _has_provider_env_config(content)
 
 
+def test_get_supported_command_targets_accepts_engram_wrapper(monkeypatch, tmp_path):
+    project_root = tmp_path / "project"
+    venv_bin = project_root / "venv" / "bin" / "hermes"
+    venv_bin.parent.mkdir(parents=True)
+    venv_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    home = tmp_path / "home"
+    wrapper = home / ".engram" / "config" / "hermes" / "bin" / "hermes"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    monkeypatch.setattr(doctor.Path, "home", lambda: home)
+
+    targets = doctor._get_supported_command_targets(venv_bin)
+
+    assert venv_bin.resolve() in targets
+    assert wrapper.resolve() in targets
+
+
 class TestDoctorToolAvailabilityOverrides:
     def test_marks_honcho_available_when_configured(self, monkeypatch):
         monkeypatch.setattr(doctor, "_honcho_is_configured_for_doctor", lambda: True)
@@ -157,6 +176,57 @@ def test_check_gateway_service_linger_skips_when_service_not_installed(monkeypat
     out = capsys.readouterr().out
     assert out == ""
     assert issues == []
+
+
+def test_run_doctor_accepts_engram_wrapper_symlink(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    project_root = tmp_path / "project"
+    hermes_home = home / ".hermes"
+    venv_bin = project_root / "venv" / "bin" / "hermes"
+    wrapper = home / ".engram" / "config" / "hermes" / "bin" / "hermes"
+    cmd_link = home / ".local" / "bin" / "hermes"
+
+    hermes_home.mkdir(parents=True)
+    project_root.mkdir(parents=True)
+    venv_bin.parent.mkdir(parents=True)
+    wrapper.parent.mkdir(parents=True)
+    cmd_link.parent.mkdir(parents=True)
+
+    (hermes_home / "config.yaml").write_text("memory: {}\n", encoding="utf-8")
+    venv_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+    cmd_link.symlink_to(wrapper)
+
+    monkeypatch.setattr(doctor_mod, "HERMES_HOME", hermes_home)
+    monkeypatch.setattr(doctor_mod, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(doctor_mod, "_DHH", str(hermes_home))
+    monkeypatch.setattr(doctor.Path, "home", lambda: home)
+    monkeypatch.delenv("TERMUX_VERSION", raising=False)
+    monkeypatch.setenv("HOME", str(home))
+
+    fake_model_tools = types.SimpleNamespace(
+        check_tool_availability=lambda *a, **kw: ([], []),
+        TOOLSET_REQUIREMENTS={},
+    )
+    monkeypatch.setitem(sys.modules, "model_tools", fake_model_tools)
+
+    try:
+        from hermes_cli import auth as _auth_mod
+        monkeypatch.setattr(_auth_mod, "get_nous_auth_status", lambda: {})
+        monkeypatch.setattr(_auth_mod, "get_codex_auth_status", lambda: {})
+    except Exception:
+        pass
+
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        doctor_mod.run_doctor(Namespace(fix=False))
+    out = buf.getvalue()
+
+    assert "points to wrong target" not in out
+    assert "Broken symlink at ~/.local/bin/hermes" not in out
+    assert "~/.local/bin/hermes → correct target" in out
+    assert "Engram wrapper" in out
 
 
 # ── Memory provider section (doctor should only check the *active* provider) ──
