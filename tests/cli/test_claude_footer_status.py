@@ -1,0 +1,38 @@
+from datetime import datetime, timedelta
+from unittest.mock import patch
+
+from cli import HermesCLI
+
+
+def _make_cli(*, presentation_mode="claude_code"):
+    cli_obj = HermesCLI.__new__(HermesCLI)
+    cli_obj.presentation_mode = presentation_mode
+    cli_obj.model = "anthropic/claude-opus-4.6"
+    cli_obj.session_start = datetime.now() - timedelta(minutes=9, seconds=44)
+    cli_obj.conversation_history = [{"role": "user", "content": "hi"}]
+    cli_obj.agent = None
+    cli_obj._background_tasks = {"bg-1": object()}
+    cli_obj._approval_state = {"command": "rm -rf /tmp/x"}
+    cli_obj._status_bar_visible = True
+    return cli_obj
+
+
+class TestClaudeFooterStatus:
+    def test_claude_mode_status_bar_mentions_workspace_approval_and_shells(self):
+        cli_obj = _make_cli()
+
+        with patch.dict("os.environ", {"TERMINAL_CWD": "/home/cc/cDesign"}, clear=False):
+            text = cli_obj._build_status_bar_text(width=140)
+
+        assert "claude-opus-4.6" in text
+        assert "cDesign" in text
+        assert "approval" in text
+        assert "1 shell" in text
+
+    def test_classic_mode_status_bar_does_not_force_new_footer_fields(self):
+        cli_obj = _make_cli(presentation_mode="classic")
+
+        text = cli_obj._build_status_bar_text(width=140)
+
+        assert "cDesign" not in text
+        assert "1 shell" not in text

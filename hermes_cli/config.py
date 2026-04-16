@@ -543,6 +543,7 @@ DEFAULT_CONFIG = {
     "display": {
         "compact": False,
         "personality": "kawaii",
+        "presentation_mode": "classic",  # classic | claude_code
         "resume_display": "full",
         "busy_input_mode": "interrupt",
         "bell_on_complete": False,

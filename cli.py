@@ -64,6 +64,15 @@ from agent.usage_pricing import (
     format_token_count_compact,
 )
 from hermes_cli.banner import _format_context_length, format_banner_version_label
+from hermes_cli.presentation import (
+    CLASSIC_PRESENTATION,
+    is_claude_code_mode,
+    normalize_presentation_mode,
+    summarize_tool_activity,
+    workspace_label,
+    approval_label,
+    shell_count_label,
+)
 
 _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
@@ -1643,7 +1652,10 @@ class HermesCLI:
         self.busy_input_mode = "queue" if str(_bim).strip().lower() == "queue" else "interrupt"
 
         self.verbose = verbose if verbose is not None else (self.tool_progress_mode == "verbose")
-        
+        self.presentation_mode = normalize_presentation_mode(
+            CLI_CONFIG["display"].get("presentation_mode", CLASSIC_PRESENTATION)
+        )
+
         # streaming: stream tokens to the terminal as they arrive (display.streaming in config.yaml)
         self.streaming_enabled = CLI_CONFIG["display"].get("streaming", False)
 
@@ -1919,6 +1931,9 @@ class HermesCLI:
             "session_total_tokens": 0,
             "session_api_calls": 0,
             "compressions": 0,
+            "workspace_label": workspace_label(),
+            "approval_label": approval_label(getattr(self, "_approval_state", None)),
+            "shell_count_label": shell_count_label(getattr(self, "_background_tasks", {})),
         }
 
         if not agent:
@@ -2066,6 +2081,28 @@ class HermesCLI:
             percent_label = f"{percent}%" if percent is not None else "--"
             duration_label = snapshot["duration"]
 
+            if is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                if snapshot["context_length"]:
+                    ctx_total = _format_context_length(snapshot["context_length"])
+                    ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                    context_label = f"{ctx_used}/{ctx_total}"
+                else:
+                    context_label = "ctx --"
+
+                if width < 76:
+                    parts = [f"⚕ {snapshot['model_short']}", snapshot["workspace_label"], duration_label]
+                    return self._trim_status_bar_text(" · ".join(parts), width)
+
+                parts = [
+                    f"⚕ {snapshot['model_short']}",
+                    snapshot["workspace_label"],
+                    context_label,
+                    snapshot["approval_label"],
+                    snapshot["shell_count_label"],
+                    duration_label,
+                ]
+                return self._trim_status_bar_text(" │ ".join(parts), width)
+
             if width < 52:
                 text = f"⚕ {snapshot['model_short']} · {duration_label}"
                 return self._trim_status_bar_text(text, width)
@@ -2099,6 +2136,10 @@ class HermesCLI:
             # line and produce duplicated status bar rows over long sessions.
             width = self._get_tui_terminal_width()
             duration_label = snapshot["duration"]
+
+            if is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                text = self._build_status_bar_text(width=width)
+                return [("class:status-bar", f" {text} ")]
 
             if width < 52:
                 frags = [
@@ -2594,9 +2635,10 @@ class HermesCLI:
                 self._stream_text_ansi = f"\033[38;2;{_r};{_g};{_b}m"
             except (ValueError, IndexError):
                 self._stream_text_ansi = ""
-            w = shutil.get_terminal_size().columns
-            fill = w - 2 - len(label)
-            _cprint(f"\n{_ACCENT}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
+            if not is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                w = shutil.get_terminal_size().columns
+                fill = w - 2 - len(label)
+                _cprint(f"\n{_GOLD}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
 
         self._stream_buf += text
 
@@ -2625,7 +2667,7 @@ class HermesCLI:
             self._stream_buf = ""
 
         # Close the response box
-        if self._stream_box_opened:
+        if self._stream_box_opened and not is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
             w = shutil.get_terminal_size().columns
             _cprint(f"{_ACCENT}╰{'─' * (w - 2)}╯{_RST}")
 
@@ -6771,14 +6813,17 @@ class HermesCLI:
             return
         if function_name and not function_name.startswith("_"):
             import time as _time
-            from agent.display import get_tool_emoji
-            emoji = get_tool_emoji(function_name)
             label = preview or function_name
             from agent.display import get_tool_preview_max_len
             _pl = get_tool_preview_max_len()
             if _pl > 0 and len(label) > _pl:
                 label = label[:_pl - 3] + "..."
-            self._spinner_text = f"{emoji} {label}"
+            if is_claude_code_mode(getattr(self, "presentation_mode", CLASSIC_PRESENTATION)):
+                self._spinner_text = summarize_tool_activity(function_name, label)
+            else:
+                from agent.display import get_tool_emoji
+                emoji = get_tool_emoji(function_name)
+                self._spinner_text = f"{emoji} {label}"
             self._tool_start_time = _time.monotonic()
             # Store args for stacked scrollback line on completion
             self._pending_tool_info.setdefault(function_name, []).append(
